@@ -6,7 +6,7 @@ name: Release
 on:
   push:
     branches: [main]
-    paths: [moonraker-printer-card.js]
+    paths: [moonraker-printer-card.js, .github/workflows/release.yml]
   workflow_dispatch:
 
 permissions:

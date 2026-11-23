@@ -54,7 +54,7 @@ camera_rotation: 180
 | `device_id` | – | Moonraker-Gerät (im Editor auswählbar) |
 | `prefix` | – | Alternativ: Entitäts-Präfix, z. B. `hobbyraum_neptune_4_pro` |
 | `name` | Gerätename | Überschrift |
-| `camera` | automatisch | Andere Kamera-Entität verwenden |
+| `camera` | automatisch | Kamera-Entität fest vorgeben (empfohlen, wenn der Drucker mehrere Kamera-Entitäten hat) |
 | `camera_rotation` | `0` | `0`, `90`, `180` oder `270` |
 | `camera_mirror` | `false` | Bild horizontal spiegeln |
 | `camera_live` | `true` | Live-Video statt Standbilder |

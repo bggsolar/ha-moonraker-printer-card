@@ -6,7 +6,7 @@
  * MIT License
  */
 
-const CARD_VERSION = "0.1.2";
+const CARD_VERSION = "0.1.3";
 
 const T = {
   de: {
@@ -246,14 +246,30 @@ class MoonrakerPrinterCard extends HTMLElement {
     head.innerHTML = this._renderHead(e);
     this._renderCamera(e);
     body.innerHTML = this._renderJob(e) + this._renderTemps(e) + this._renderControls(e) + this._renderStats(e);
-    body.querySelectorAll("img.thumb").forEach((img) =>
-      img.addEventListener("error", () => {
-        const ph = document.createElement("div");
-        ph.className = "thumb ph";
-        ph.innerHTML = '<ha-icon icon="mdi:printer-3d"></ha-icon>';
-        img.replaceWith(ph);
-      })
-    );
+  }
+
+  /* Thumbnail per print file: preload once, show it only after it loaded,
+     remember failures so a missing thumbnail is not requested again on every update. */
+  _thumbFor(e) {
+    const hass = this._hass;
+    const file = hass.states[e.filename]?.state;
+    const url = e.thumbnail ? hass.states[e.thumbnail]?.attributes?.entity_picture : null;
+    if (!file || !url) return null;
+    const t = (this._thumb ||= {});
+    if (t.file !== file) {
+      Object.assign(t, { file, status: "loading", url: null });
+      const pre = new Image();
+      pre.onload = () => {
+        if (t.file !== file) return;
+        Object.assign(t, { status: "ok", url });
+        this._update(true);
+      };
+      pre.onerror = () => {
+        if (t.file === file) t.status = "fail";
+      };
+      pre.src = url;
+    }
+    return t.status === "ok" ? t.url : null;
   }
 
   _renderHead(e) {
@@ -400,7 +416,7 @@ class MoonrakerPrinterCard extends HTMLElement {
     if (st !== "printing" && st !== "paused") return "";
     const pct = num(hass.states[e.progress]?.state) ?? 0;
     const file = (hass.states[e.filename]?.state || "").replace(/\.gcode$/i, "");
-    const thumb = e.thumbnail ? hass.states[e.thumbnail]?.attributes?.entity_picture : null;
+    const thumb = this._thumbFor(e);
     const cur = num(hass.states[e.layer]?.state);
     const tot = num(hass.states[e.totalLayer]?.state);
     const z = num(hass.states[e.z]?.state);

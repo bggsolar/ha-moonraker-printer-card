@@ -7,6 +7,8 @@ Eine Lovelace-Karte für Klipper-Drucker, die über die
 in Home Assistant eingebunden sind. Im visuellen Editor wählst du nur das
 Drucker-Gerät aus, die Karte findet alle Entitäten selbst.
 
+<img src="docs/preview.png" width="420" alt="Vorschau der Karte während eines Drucks">
+
 Entstanden für einen Elegoo Neptune 4 Pro, funktioniert aber mit jedem Drucker,
 den die Moonraker-Integration anlegt.
 

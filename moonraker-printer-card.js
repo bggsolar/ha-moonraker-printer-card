@@ -6,7 +6,7 @@
  * MIT License
  */
 
-const CARD_VERSION = "0.1.0";
+const CARD_VERSION = "0.1.1";
 
 const T = {
   de: {
@@ -21,7 +21,7 @@ const T = {
     jobs: "Drucke", printTime: "Druckzeit", longest: "Längster Druck", stats: "Statistik",
     noDevice: "Bitte im Editor einen Moonraker-Drucker auswählen.",
     notFound: "Keine Moonraker-Entitäten gefunden für",
-    temps: "Temperaturen", controls: "Steuerung",
+    temps: "Temperaturen", controls: "Steuerung", camOff: "Kamera nicht erreichbar",
     edDevice: "Drucker (Moonraker-Gerät)", edPrefix: "oder Entitäts-Präfix (z. B. hobbyraum_neptune_4_pro)",
     edName: "Name", edCamera: "Kamera", edRotate: "Kamera drehen", edFlip: "Kamera spiegeln",
     edShowCam: "Kamera anzeigen", edShowStats: "Statistik anzeigen", edShowControls: "Steuerung anzeigen",
@@ -39,7 +39,7 @@ const T = {
     jobs: "Prints", printTime: "Print time", longest: "Longest print", stats: "Statistics",
     noDevice: "Please pick a Moonraker printer in the editor.",
     notFound: "No Moonraker entities found for",
-    temps: "Temperatures", controls: "Controls",
+    temps: "Temperatures", controls: "Controls", camOff: "Camera not reachable",
     edDevice: "Printer (Moonraker device)", edPrefix: "or entity prefix (e.g. my_printer)",
     edName: "Name", edCamera: "Camera", edRotate: "Rotate camera", edFlip: "Mirror camera",
     edShowCam: "Show camera", edShowStats: "Show statistics", edShowControls: "Show controls",
@@ -185,7 +185,7 @@ class MoonrakerPrinterCard extends HTMLElement {
       ...config,
     };
     this._sig = null;
-    this._camCard = null;
+    this._camFor = null;
     if (this._root) this._update(true);
   }
 
@@ -199,7 +199,6 @@ class MoonrakerPrinterCard extends HTMLElement {
 
   set hass(hass) {
     this._hass = hass;
-    if (this._camCard) this._camCard.hass = hass;
     this._update(false);
   }
 
@@ -210,6 +209,11 @@ class MoonrakerPrinterCard extends HTMLElement {
       this._root.addEventListener("click", (e) => this._onClick(e));
     }
     this._update(true);
+    this._loadCam(true);
+    clearInterval(this._camTimer);
+    this._camTimer = setInterval(() => {
+      if (this._config && !this._config.camera_live) this._loadCam(true);
+    }, 10000);
   }
 
   _prefix() {
@@ -245,6 +249,14 @@ class MoonrakerPrinterCard extends HTMLElement {
     head.innerHTML = this._renderHead(e);
     this._renderCamera(e);
     body.innerHTML = this._renderJob(e) + this._renderTemps(e) + this._renderControls(e) + this._renderStats(e);
+    body.querySelectorAll("img.thumb").forEach((img) =>
+      img.addEventListener("error", () => {
+        const ph = document.createElement("div");
+        ph.className = "thumb ph";
+        ph.innerHTML = '<ha-icon icon="mdi:printer-3d"></ha-icon>';
+        img.replaceWith(ph);
+      })
+    );
   }
 
   _renderHead(e) {
@@ -275,40 +287,77 @@ class MoonrakerPrinterCard extends HTMLElement {
     </div>`;
   }
 
-  async _renderCamera(e) {
+  _renderCamera(e) {
     const holder = this._root.getElementById("cam");
     const c = this._config;
     if (!c.show_camera || !e.camera) {
       holder.innerHTML = "";
-      this._camCard = null;
+      this._camImg = null;
       this._camFor = null;
       return;
     }
-    const key = `${e.camera}|${c.camera_live}|${c.camera_rotation}|${c.camera_mirror}`;
-    if (this._camFor === key) return;
-    this._camFor = key;
     const rot = Number(c.camera_rotation) || 0;
-    const tf = `rotate(${rot}deg)${c.camera_mirror ? " scaleX(-1)" : ""}`;
-    holder.innerHTML = `<div class="camwrap ${rot % 180 ? "quarter" : ""}"><div class="cam" style="transform:${tf}"></div></div>`;
-    const target = holder.querySelector(".cam");
-    const cfg = {
-      type: "picture-entity",
-      entity: e.camera,
-      camera_view: c.camera_live ? "live" : "auto",
-      show_name: false,
-      show_state: false,
-      tap_action: { action: "none" },
-      hold_action: { action: "none" },
-    };
-    try {
-      const helpers = await window.loadCardHelpers();
-      const card = helpers.createCardElement(cfg);
-      card.hass = this._hass;
-      target.appendChild(card);
-      this._camCard = card;
-    } catch (err) {
-      const pic = this._hass.states[e.camera]?.attributes?.entity_picture;
-      target.innerHTML = pic ? `<img src="${esc(pic)}">` : "";
+    const key = `${e.camera}|${c.camera_live}|${rot}|${c.camera_mirror}`;
+    if (this._camFor !== key) {
+      this._camFor = key;
+      const tf = `rotate(${rot}deg)${c.camera_mirror ? " scaleX(-1)" : ""}`;
+      holder.innerHTML = `<div class="camwrap off ${rot % 180 ? "quarter" : ""}">
+        <div class="cam" style="transform:${tf}"><img alt=""></div>
+        <div class="camoff"><ha-icon icon="mdi:video-off-outline"></ha-icon>${esc(tr(this._hass, "camOff"))}</div></div>`;
+      const wrap = holder.querySelector(".camwrap");
+      const img = holder.querySelector("img");
+      img.addEventListener("load", () => {
+        this._camErr = false;
+        wrap.classList.remove("off");
+      });
+      img.addEventListener("error", () => {
+        if (!img.getAttribute("src")) return;
+        this._camErr = true;
+        wrap.classList.add("off");
+        clearTimeout(this._camRetry);
+        this._camRetry = setTimeout(() => this._loadCam(true), 5000);
+      });
+      this._camImg = img;
+      this._camSrc = null;
+      this._loadCam(true);
+    } else {
+      this._loadCam(false);
+    }
+  }
+
+  _camUrl() {
+    const s = this._hass?.states[this._e?.camera];
+    const pic = s?.attributes?.entity_picture;
+    if (!pic || s.state === "unavailable") return null;
+    if (this._config.camera_live) return pic.replace("/api/camera_proxy/", "/api/camera_proxy_stream/");
+    return `${pic}${pic.includes("?") ? "&" : "?"}t=${Date.now()}`;
+  }
+
+  /* Live: keep a running MJPEG stream (token rotation does not break it), reload only on error.
+     Snapshot: reload on every timer tick. */
+  _loadCam(reload) {
+    const img = this._camImg;
+    if (!img || !this.isConnected) return;
+    const url = this._camUrl();
+    if (!url) {
+      img.removeAttribute("src");
+      this._camSrc = null;
+      img.closest(".camwrap")?.classList.add("off");
+      return;
+    }
+    if (reload || !this._camSrc || this._camErr) {
+      this._camSrc = url;
+      img.src = url;
+    }
+  }
+
+  disconnectedCallback() {
+    clearInterval(this._camTimer);
+    clearTimeout(this._camRetry);
+    this._camTimer = null;
+    if (this._camImg) {
+      this._camImg.removeAttribute("src"); // stop the stream while the card is hidden
+      this._camSrc = null;
     }
   }
 
@@ -324,7 +373,7 @@ class MoonrakerPrinterCard extends HTMLElement {
     const z = num(hass.states[e.z]?.state);
     const layer = tot && tot > 0 && cur !== null
       ? [tr(hass, "layer"), `${cur} / ${tot}`]
-      : [tr(hass, "height"), z !== null ? `Z ${fmt(hass, z, 2)} mm` : "–"];
+      : [tr(hass, "height"), z !== null && z >= 0 ? `Z ${fmt(hass, z, 2)} mm` : "–"];
     const used = num(hass.states[e.filamentUsed]?.state);
     const speed = num(hass.states[e.printSpeed]?.state);
     const items = [
@@ -339,7 +388,7 @@ class MoonrakerPrinterCard extends HTMLElement {
       id ? `<button class="act ${cls}" data-press="${esc(id)}" ${cls === "danger" ? 'data-confirm="cancel"' : ""}><ha-icon icon="${icon}"></ha-icon>${esc(label)}</button>` : "";
     return `<div class="section job">
       <div class="jobtop">
-        ${thumb ? `<img class="thumb" src="${esc(thumb)}" alt="">` : ""}
+        ${thumb ? `<img class="thumb" src="${esc(thumb)}" alt="">` : `<div class="thumb ph"><ha-icon icon="mdi:printer-3d"></ha-icon></div>`}
         <div class="jobinfo">
           <div class="file" title="${esc(file)}">${esc(file)}</div>
           <div class="bar"><div style="width:${Math.min(100, Math.max(0, pct))}%"></div></div>
@@ -461,11 +510,14 @@ ha-card { overflow: hidden; }
   padding: 4px 8px; background: none; color: var(--secondary-text-color); cursor: pointer; font: inherit; }
 .chip.on { color: var(--state-light-active-color, #ffc107); border-color: currentColor; }
 .chip.bad { color: var(--error-color); border-color: currentColor; }
-.camwrap { overflow: hidden; background: #000; }
+.camwrap { position: relative; overflow: hidden; background: #000; }
+.cam img { display: block; width: 100%; min-height: 120px; object-fit: contain; }
+.camwrap.off .cam { visibility: hidden; height: 0; }
+.camoff { display: none; }
+.camwrap.off .camoff { display: flex; align-items: center; justify-content: center; gap: 8px; min-height: 160px; color: #bbb; }
+.thumb.ph { display: flex; align-items: center; justify-content: center; color: var(--secondary-text-color); --mdc-icon-size: 36px; }
 .camwrap.quarter .cam { aspect-ratio: 1; }
 .cam { transform-origin: center; }
-.cam ha-card, .cam hui-picture-entity-card { border-radius: 0; border: 0; box-shadow: none; }
-.cam img { display: block; width: 100%; }
 .section { padding: 12px 16px; border-top: 1px solid var(--divider-color); }
 .stitle { font-size: .8em; text-transform: uppercase; letter-spacing: .05em; color: var(--secondary-text-color); margin-bottom: 8px; }
 .jobtop { display: flex; gap: 12px; align-items: center; }

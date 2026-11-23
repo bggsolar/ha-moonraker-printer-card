@@ -1,0 +1,51 @@
+name: Release
+
+# Creates a GitHub release whenever CARD_VERSION in the card changes on main.
+# Flow: raise CARD_VERSION in a pull request -> merge -> release vX.Y.Z appears.
+
+on:
+  push:
+    branches: [main]
+    paths: [moonraker-printer-card.js, .github/workflows/release.yml]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    # Only this job may write, and only repository contents (tags/releases).
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Read version
+        id: v
+        run: |
+          ver=$(grep -oP 'const CARD_VERSION = "\K[0-9]+\.[0-9]+\.[0-9]+(?=")' moonraker-printer-card.js)
+          if [ -z "$ver" ]; then echo "CARD_VERSION not found" >&2; exit 1; fi
+          echo "tag=v$ver" >> "$GITHUB_OUTPUT"
+
+      - name: Create release if the tag does not exist yet
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.v.outputs.tag }}
+        run: |
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release $TAG already exists, nothing to do."
+            exit 0
+          fi
+          node --check moonraker-printer-card.js
+          gh release create "$TAG" moonraker-printer-card.js \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "$TAG" \
+            --generate-notes

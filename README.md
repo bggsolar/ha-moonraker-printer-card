@@ -92,6 +92,10 @@ Install through HACS as a custom repository of type **Dashboard**, or copy
 `moonraker-printer-card.js` to `/config/www/` and add it as a resource.
 Options: see the table above.
 
+## Releases
+
+Neue Versionen entstehen automatisch: `CARD_VERSION` in `moonraker-printer-card.js` erhöhen, per Pull Request mergen, der Workflow *Release* legt das GitHub-Release `vX.Y.Z` an. HACS meldet es dann als Update.
+
 ## License
 
 MIT, see [LICENSE](LICENSE). Not affiliated with Klipper, Moonraker or any printer vendor.

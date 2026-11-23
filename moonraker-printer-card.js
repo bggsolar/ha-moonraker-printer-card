@@ -6,7 +6,7 @@
  * MIT License
  */
 
-const CARD_VERSION = "0.1.1";
+const CARD_VERSION = "0.1.2";
 
 const T = {
   de: {
@@ -25,7 +25,7 @@ const T = {
     edDevice: "Drucker (Moonraker-Gerät)", edPrefix: "oder Entitäts-Präfix (z. B. hobbyraum_neptune_4_pro)",
     edName: "Name", edCamera: "Kamera", edRotate: "Kamera drehen", edFlip: "Kamera spiegeln",
     edShowCam: "Kamera anzeigen", edShowStats: "Statistik anzeigen", edShowControls: "Steuerung anzeigen",
-    edShowTemps: "Temperaturen anzeigen", edLive: "Live-Video statt Standbild",
+    edShowTemps: "Temperaturen anzeigen", edLive: "Live-Video statt Standbild", edRefresh: "Standbild-Intervall",
   },
   en: {
     printing: "Printing", paused: "Paused", complete: "Complete", cancelled: "Cancelled",
@@ -43,7 +43,7 @@ const T = {
     edDevice: "Printer (Moonraker device)", edPrefix: "or entity prefix (e.g. my_printer)",
     edName: "Name", edCamera: "Camera", edRotate: "Rotate camera", edFlip: "Mirror camera",
     edShowCam: "Show camera", edShowStats: "Show statistics", edShowControls: "Show controls",
-    edShowTemps: "Show temperatures", edLive: "Live video instead of snapshots",
+    edShowTemps: "Show temperatures", edLive: "Live video instead of snapshots", edRefresh: "Snapshot interval",
   },
 };
 
@@ -210,10 +210,7 @@ class MoonrakerPrinterCard extends HTMLElement {
     }
     this._update(true);
     this._loadCam(true);
-    clearInterval(this._camTimer);
-    this._camTimer = setInterval(() => {
-      if (this._config && !this._config.camera_live) this._loadCam(true);
-    }, 10000);
+    this._startCamTimer();
   }
 
   _prefix() {
@@ -307,48 +304,84 @@ class MoonrakerPrinterCard extends HTMLElement {
       const wrap = holder.querySelector(".camwrap");
       const img = holder.querySelector("img");
       img.addEventListener("load", () => {
-        this._camErr = false;
         wrap.classList.remove("off");
       });
       img.addEventListener("error", () => {
         if (!img.getAttribute("src")) return;
-        this._camErr = true;
         wrap.classList.add("off");
         clearTimeout(this._camRetry);
-        this._camRetry = setTimeout(() => this._loadCam(true), 5000);
+        if (this._live()) {
+          // MJPEG stream not available for this camera: fall back to refreshed snapshots
+          this._camFallback = true;
+          this._camSrc = null;
+          img.removeAttribute("src");
+          this._startCamTimer();
+          this._loadCam(true);
+        }
       });
       this._camImg = img;
       this._camSrc = null;
+      this._camFallback = false;
+      this._startCamTimer();
       this._loadCam(true);
     } else {
       this._loadCam(false);
     }
   }
 
+  _live() {
+    return !!this._config?.camera_live && !this._camFallback;
+  }
+
+  _startCamTimer() {
+    clearInterval(this._camTimer);
+    this._camTimer = null;
+    if (!this.isConnected || !this._config || this._live()) return;
+    const sec = Math.max(1, Number(this._config.camera_refresh) || 2);
+    this._camTimer = setInterval(() => this._loadCam(true), sec * 1000);
+  }
+
   _camUrl() {
     const s = this._hass?.states[this._e?.camera];
     const pic = s?.attributes?.entity_picture;
     if (!pic || s.state === "unavailable") return null;
-    if (this._config.camera_live) return pic.replace("/api/camera_proxy/", "/api/camera_proxy_stream/");
+    if (this._live()) return pic.replace("/api/camera_proxy/", "/api/camera_proxy_stream/");
     return `${pic}${pic.includes("?") ? "&" : "?"}t=${Date.now()}`;
   }
 
-  /* Live: keep a running MJPEG stream (token rotation does not break it), reload only on error.
-     Snapshot: reload on every timer tick. */
+  /* Live: keep one running MJPEG stream (token rotation does not break it).
+     Snapshots: preload the next picture and swap it in, so the image never flickers. */
   _loadCam(reload) {
     const img = this._camImg;
     if (!img || !this.isConnected) return;
+    const wrap = img.closest(".camwrap");
     const url = this._camUrl();
     if (!url) {
       img.removeAttribute("src");
       this._camSrc = null;
-      img.closest(".camwrap")?.classList.add("off");
+      wrap?.classList.add("off");
       return;
     }
-    if (reload || !this._camSrc || this._camErr) {
+    if (this._live()) {
+      if (reload || !this._camSrc) {
+        this._camSrc = url;
+        img.src = url;
+      }
+      return;
+    }
+    if ((!reload && this._camSrc) || this._camLoading) return;
+    this._camLoading = true;
+    const pre = new Image();
+    pre.onload = () => {
+      this._camLoading = false;
       this._camSrc = url;
       img.src = url;
-    }
+    };
+    pre.onerror = () => {
+      this._camLoading = false;
+      wrap?.classList.add("off");
+    };
+    pre.src = url;
   }
 
   disconnectedCallback() {
@@ -576,6 +609,7 @@ class MoonrakerPrinterCardEditor extends HTMLElement {
           { name: "camera_mirror", selector: { boolean: {} } },
           { name: "show_camera", selector: { boolean: {} } },
           { name: "camera_live", selector: { boolean: {} } },
+          { name: "camera_refresh", selector: { number: { min: 1, max: 60, step: 1, mode: "box", unit_of_measurement: "s" } } },
           { name: "show_temperatures", selector: { boolean: {} } },
           { name: "show_controls", selector: { boolean: {} } },
           { name: "show_stats", selector: { boolean: {} } },
@@ -598,6 +632,7 @@ class MoonrakerPrinterCardEditor extends HTMLElement {
           camera_mirror: tr(this._hass, "edFlip"),
           show_camera: tr(this._hass, "edShowCam"),
           camera_live: tr(this._hass, "edLive"),
+          camera_refresh: tr(this._hass, "edRefresh"),
           show_temperatures: tr(this._hass, "edShowTemps"),
           show_controls: tr(this._hass, "edShowControls"),
           show_stats: tr(this._hass, "edShowStats"),

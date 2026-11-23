@@ -57,7 +57,8 @@ camera_rotation: 180
 | `camera` | automatisch | Kamera-Entität fest vorgeben (empfohlen, wenn der Drucker mehrere Kamera-Entitäten hat) |
 | `camera_rotation` | `0` | `0`, `90`, `180` oder `270` |
 | `camera_mirror` | `false` | Bild horizontal spiegeln |
-| `camera_live` | `true` | Live-Video statt Standbilder |
+| `camera_live` | `true` | Live-Video statt Standbilder. Liefert die Kamera keinen Stream, schaltet die Karte automatisch auf Standbilder um. |
+| `camera_refresh` | `2` | Standbild-Intervall in Sekunden |
 | `show_camera` | `true` | Kamera anzeigen |
 | `show_temperatures` | `true` | Temperaturen anzeigen |
 | `show_controls` | `true` | Lüfter, Geschwindigkeit, Home, Not-Aus anzeigen |
